@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Rice Stress DSS</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <h1>Rice Stress DSS</h1>
+
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="alert">
+            {% for m in messages %}
+              <div>{{ m }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <form class="form" action="{{ url_for('run_infer') }}" method="POST" enctype="multipart/form-data">
+        <!-- FIX: fusion-only, jadi mode dikunci lewat hidden input -->
+        <input type="hidden" name="mode" value="fusion">
+
+        <label>Upload RGB (wajib)</label>
+        <input type="file" name="rgb_file" accept=".jpg,.jpeg,.png" required>
+
+        <label>Upload Thermal (wajib, .npy disarankan)</label>
+        <input type="file" name="th_file" accept=".npy,.png,.jpg,.jpeg" required>
+
+        <button class="btn" type="submit">Run</button>
+      </form>
+
+      <div class="hint">
+        <div><b>Catatan:</b></div>
+        <ul>
+          <li>Sistem berjalan dalam mode <b>fusion</b> (RGB + Thermal).</li>
+          <li>File <b>Thermal</b> wajib diunggah. Format <b>.npy</b> direkomendasikan.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

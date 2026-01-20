@@ -1,0 +1,238 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Result - Rice Stress DSS</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="page">
+    <div class="headerRow">
+      <h1>Result</h1>
+      <a class="linkTop" href="{{ url_for('index') }}">Run another</a>
+    </div>
+
+    <!-- Pills (single, clean) -->
+    <div class="pills">
+      <div class="pill">Mode: {{ summary.mode }}</div>
+      <div class="pill">Area: {{ summary.area_status|upper }}</div>
+      <div class="pill">Stress: {{ "%.1f"|format(summary.stress_ratio * 100) }}%</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="k">Patches</div>
+        <div class="v">{{ summary.num_patches }}</div>
+      </div>
+      <div class="stat">
+        <div class="k">Stress</div>
+        <div class="v">{{ summary.stress_count }}</div>
+      </div>
+      <div class="stat">
+        <div class="k">Normal</div>
+        <div class="v">{{ summary.normal_count }}</div>
+      </div>
+      <div class="stat">
+        <div class="k">Mean Temp</div>
+        <div class="v">
+          {% set mt = summary.get("temp_mean_global") %}
+          {% if mt is not none %}
+            {{ "%.2f"|format(mt) }}
+          {% else %}
+            -
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="btnRow">
+      <a class="btn" href="{{ url_for('download', job_id=job_id, fname=csv_name) }}">Download CSV</a>
+      <a class="btn secondary" href="{{ url_for('download', job_id=job_id, fname=overlay_name) }}">Download Overlay</a>
+    </div>
+
+    <h2>Overlay (Normal vs Stress)</h2>
+    <div class="subhint">
+      Hover pada grid untuk melihat koordinat, canopy, suhu (jika thermal tersedia), dan level (low/medium/high).
+    </div>
+
+    <div id="wrap" class="overlayWrap">
+      <img id="overlayImg" class="overlayImg"
+           src="{{ url_for('view_file', job_id=job_id, fname=overlay_name) }}"
+           alt="overlay">
+      <div id="hitlayer" class="hitlayer"></div>
+      <div id="tip" class="tooltip" style="display:none;"></div>
+    </div>
+
+    <script>
+      const GRID_JSON_URL = "{{ url_for('view_file', job_id=job_id, fname=grid_json_name) }}";
+
+      const img = document.getElementById("overlayImg");
+      const layer = document.getElementById("hitlayer");
+      const tip = document.getElementById("tip");
+
+      let grid = null;
+      let cellMap = new Map(); // key "r,c" -> cell
+
+      function keyRC(r,c){ return `${r},${c}`; }
+
+      async function loadGrid(){
+        const res = await fetch(GRID_JSON_URL);
+        grid = await res.json();
+        cellMap.clear();
+        for (const cell of grid.cells){
+          cellMap.set(keyRC(cell.r, cell.c), cell);
+        }
+      }
+
+      function showTip(x, y, html){
+        tip.innerHTML = html;
+        tip.style.left = (x + 12) + "px";
+        tip.style.top = (y + 12) + "px";
+        tip.style.display = "block";
+      }
+
+      function hideTip(){
+        tip.style.display = "none";
+      }
+
+      function getMousePosOnImage(evt){
+        const rect = img.getBoundingClientRect();
+        const x = (evt.clientX - rect.left);
+        const y = (evt.clientY - rect.top);
+
+        const scaleX = grid.img_w / rect.width;
+        const scaleY = grid.img_h / rect.height;
+
+        return { ox: x * scaleX, oy: y * scaleY, vx: x, vy: y };
+      }
+
+      function lookupCell(ox, oy){
+        const r = Math.floor(oy / grid.stride);
+        const c = Math.floor(ox / grid.stride);
+
+        const x0 = c * grid.stride;
+        const y0 = r * grid.stride;
+
+        if (x0 + grid.patch > grid.img_w) return null;
+        if (y0 + grid.patch > grid.img_h) return null;
+
+        return cellMap.get(keyRC(r,c)) || null;
+      }
+
+      function safeFixed(v, n){
+        if (v === null || v === undefined) return "-";
+        const num = Number(v);
+        if (!Number.isFinite(num)) return "-";
+        return num.toFixed(n);
+      }
+
+      function toLevel(cell){
+        // Prefer stress_level string if present
+        if (cell.stress_level !== undefined && cell.stress_level !== null) {
+          const s = String(cell.stress_level).toLowerCase();
+          if (s === "high" || s === "medium" || s === "low") return s.toUpperCase();
+          if (s === "normal") return "NORMAL";
+          if (s === "non_canopy") return "NON_CANOPY";
+        }
+        // Fallback pred_level numeric
+        if (cell.pred_level !== undefined && cell.pred_level !== null) {
+          const lv = Number(cell.pred_level);
+          if (lv === 3) return "HIGH";
+          if (lv === 2) return "MEDIUM";
+          if (lv === 1) return "LOW";
+          if (lv === 0) return "NORMAL";
+          if (lv === -1) return "NON_CANOPY";
+        }
+        return "-";
+      }
+
+      function isNonCanopy(cell){
+        // strongest: pred_level == -1
+        if (cell.pred_level !== undefined && cell.pred_level !== null) {
+          return Number(cell.pred_level) === -1;
+        }
+        // fallback: pred_display == -1
+        if (cell.pred_display !== undefined && cell.pred_display !== null) {
+          return Number(cell.pred_display) === -1;
+        }
+        // fallback: is_canopy false
+        if (cell.is_canopy !== undefined && cell.is_canopy !== null) {
+          return cell.is_canopy === false;
+        }
+        return false;
+      }
+
+      function statusLabel(cell){
+        // Prefer pred_display if present
+        if (cell.pred_display !== undefined && cell.pred_display !== null) {
+          const v = Number(cell.pred_display);
+          if (v === 1) return "STRESS";
+          if (v === 0) return "NORMAL";
+          if (v === -1) return "NON_CANOPY";
+        }
+        // Fallback pred_stress
+        if (cell.pred_stress !== undefined && cell.pred_stress !== null) {
+          return Number(cell.pred_stress) === 1 ? "STRESS" : "NORMAL";
+        }
+        // Fallback from pred_level
+        if (cell.pred_level !== undefined && cell.pred_level !== null) {
+          const lv = Number(cell.pred_level);
+          if (lv === -1) return "NON_CANOPY";
+          if (lv === 0) return "NORMAL";
+          return "STRESS";
+        }
+        return "-";
+      }
+
+      img.addEventListener("load", async () => {
+        await loadGrid();
+      });
+
+      layer.addEventListener("mousemove", (evt) => {
+        if (!grid) return;
+
+        const { ox, oy, vx, vy } = getMousePosOnImage(evt);
+        const cell = lookupCell(ox, oy);
+
+        if (!cell){
+          hideTip();
+          return;
+        }
+
+        // Kill hover for NON_CANOPY
+        if (isNonCanopy(cell)){
+          hideTip();
+          return;
+        }
+
+        const status = statusLabel(cell);
+        const level = toLevel(cell);
+
+        const temp = (cell.temp_mean === null || cell.temp_mean === undefined)
+          ? "-"
+          : safeFixed(cell.temp_mean, 2);
+
+        const prob = (cell.y_prob === null || cell.y_prob === undefined)
+          ? "-"
+          : safeFixed(cell.y_prob, 4);
+
+        const cf = (cell.canopy_frac === null || cell.canopy_frac === undefined)
+          ? "-"
+          : (Number(cell.canopy_frac) * 100).toFixed(1) + "%";
+
+        const html = `
+          <div><b>${status}</b></div>
+          <div>Level: <b>${level}</b></div>
+          <div>Grid: (r=${cell.r}, c=${cell.c})</div>
+          <div>Temp mean: ${temp}</div>
+          <div>Prob stress: ${prob}</div>
+        `;
+        showTip(vx, vy, html);
+      });
+
+      layer.addEventListener("mouseleave", hideTip);
+    </script>
+
+  </div>
+</body>
+</html>

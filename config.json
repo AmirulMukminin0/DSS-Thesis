@@ -1,0 +1,8 @@
+{
+  "patch_size": 128,
+  "threshold": 0.5,
+  "rgb_norm": "divide_255",
+  "thermal_norm": "minmax",
+  "thermal_clip_min": null,
+  "thermal_clip_max": null
+}
